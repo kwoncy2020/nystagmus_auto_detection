@@ -23,7 +23,7 @@ third, find classification to detect nystagmus on patched(or splitted) time seri
 ![make video1](./images/4.png)
 
 ***
-* Analysis time-series-center-points with tool to get nystagmus area
+* Analysis time-series-center-points with tool to get nystagmus area in video
 ![make video2](./images/5.png)
 
 ***
