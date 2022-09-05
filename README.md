@@ -27,5 +27,6 @@ third, find classification to detect nystagmus on patched(or splitted) time seri
 ![make video2](./images/5.png)
 
 ***
-* Build another model to detect nystagmus by deeplearning model
-* Make an algorithm to detect nystagmus by experts system
+* Build another model to detect nystagmus by deeplearning model.
+* Make an algorithm to detect nystagmus by experts system or mashine learning.
+* merge them.
