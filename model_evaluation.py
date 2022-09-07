@@ -2,6 +2,7 @@ import os, glob, cv2, sys, re, time
 import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
+import sklearn
 from sklearn.metrics import PrecisionRecallDisplay
 from sklearn.metrics import precision_recall_curve
 from sklearn.metrics import average_precision_score
@@ -28,6 +29,32 @@ def dice_score(y_true:np.ndarray, y_pred:np.ndarray) -> float:
     return (2. * intersection) / (np.sum(y_true_f) + np.sum(y_pred_f) + 1e-7)
 
 
+## this function evaluate model with whole image's differencies [0,1]
+def model_evaluate_with_predicted_images2(folder_path:str)->dict:
+    ## make predicted images
+    if not check_folder_predicted_images(folder_path):
+        make_predicted_images_to_folder(folder_path)
+        
+    ## check if predicted images made
+    if not check_folder_predicted_images(folder_path):
+        raise Exception("from model_evaluate_with_predicted_images(): coudn't make predicted image or wrong number or images")
+    
+    pred_npimgs, mask_npimgs = load_pred_gray_and_mask_gray_imgs(folder_path)
+    print(mask_npimgs.shape)
+    
+    pred_npimgs_binary = pred_npimgs / 255.
+    mask_npimgs_binary = mask_npimgs / 255.
+
+
+    tn, fp, fn, tp  = sklearn.metrics.confusion_matrix(pred_npimgs_binary.flatten(), mask_npimgs_binary.flatten()).ravel()
+    print(" tn: ",tn," fp: ",fp," fn: ",fn," tp: ",tp)
+    print("Sensitivity: ", tp/(tp+fn))
+    print("Specificity: ", tn/(tn+fp))
+    print("Precision: ", tp/(tp+fp))
+    print("Accuracy: ", (tp+tn)/(tp+tn+fp+fn))
+
+
+## this function evaluate model with not whole image's differencies [0,1], only IOU area
 def model_evaluate_with_predicted_images(folder_path:str)->dict:
     ## make predicted images
     if not check_folder_predicted_images(folder_path):
@@ -180,6 +207,30 @@ def get_average_precision_score(y_true:np.ndarray, y_pred:np.ndarray, flag_draw:
         plt.show()
     return average_precision
 
+def copy_images(from_folder:str, to_folder:str, flag_predicted_image:bool=True)-> None:
+    from_images = glob.glob(os.path.join(from_folder,"*_orig.png"))
+    to_images = glob.glob(os.path.join(to_folder,"*_orig.png"))
+    from_images_num = len(from_images)
+    to_images_num = len(to_images)
+    
 
+    for index in range(from_images_num):
+        img_orig = cv2.imread(os.path.join(from_folder,f"{index}_orig.png"),cv2.IMREAD_COLOR)
+        img_mask = cv2.imread(os.path.join(from_folder,f"{index}_mask.png"),cv2.IMREAD_COLOR)
+        cv2.imwrite(os.path.join(to_folder,f"{index+to_images_num}_orig.png"),img_orig)
+        cv2.imwrite(os.path.join(to_folder,f"{index+to_images_num}_mask.png"),img_mask)
+        if flag_predicted_image:
+            img_predicted = cv2.imread(os.path.join(from_folder,f"{index}_predicted.png"),cv2.IMREAD_COLOR)
+            cv2.imwrite(os.path.join(to_folder,f"{index+to_images_num}_predicted.png"),img_predicted)
+            
 if __name__ == '__main__':
-    model_evaluate_with_predicted_images(FOLDER_PATH)
+    # f_path = "C:\kwoncy\eye\image_datas\\6_sixth_make_roi_with_bad_video_images\\test_with_clean_little_bad_imgs"
+    f_path = "C:\kwoncy\eye\image_datas\\6_sixth_make_roi_with_bad_video_images\\test_with_bad_imgs"
+    # model_evaluate_with_predicted_images(f_path)
+    # model_evaluate_with_predicted_images2(f_path)
+    # FROM_FOLDER = "C:\kwoncy\eye\image_datas\\6_sixth_make_roi_with_bad_video_images\\test_with_little_bad_imgs" 
+    # TO_FOLDER = "C:\kwoncy\eye\image_datas\\6_sixth_make_roi_with_bad_video_images\\test_with_clean_little_bad_imgs" 
+    # copy_images(FROM_FOLDER,TO_FOLDER)
+    
+    # print(2*0.990*0.977/(0.990+0.977))
+    print(2*0.835*0.957/(0.835+0.957))
