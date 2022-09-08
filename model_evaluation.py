@@ -1,4 +1,4 @@
-import os, glob, cv2, sys, re, time
+import os, glob, cv2, sys, re, time, csv
 import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
@@ -6,7 +6,7 @@ import sklearn
 from sklearn.metrics import PrecisionRecallDisplay
 from sklearn.metrics import precision_recall_curve
 from sklearn.metrics import average_precision_score
-
+from typing import Union
 from my_feature_extractor import FeatureExtractor
 from my_eval_tool import Eval_tool
 
@@ -39,19 +39,25 @@ def model_evaluate_with_predicted_images2(folder_path:str)->dict:
     if not check_folder_predicted_images(folder_path):
         raise Exception("from model_evaluate_with_predicted_images(): coudn't make predicted image or wrong number or images")
     
-    pred_npimgs, mask_npimgs = load_pred_gray_and_mask_gray_imgs(folder_path)
+    indices, pred_npimgs, mask_npimgs = load_pred_gray_and_mask_gray_imgs(folder_path)
     print(mask_npimgs.shape)
     
     pred_npimgs_binary = pred_npimgs / 255.
     mask_npimgs_binary = mask_npimgs / 255.
 
 
-    tn, fp, fn, tp  = sklearn.metrics.confusion_matrix(pred_npimgs_binary.flatten(), mask_npimgs_binary.flatten()).ravel()
+    tn, fp, fn, tp  = sklearn.metrics.confusion_matrix(mask_npimgs_binary.flatten(),pred_npimgs_binary.flatten()).ravel()
     print(" tn: ",tn," fp: ",fp," fn: ",fn," tp: ",tp)
-    print("Sensitivity: ", tp/(tp+fn))
-    print("Specificity: ", tn/(tn+fp))
-    print("Precision: ", tp/(tp+fp))
-    print("Accuracy: ", (tp+tn)/(tp+tn+fp+fn))
+    sensitivity = tp/(tp+fn)
+    print("Sensitivity: ", sensitivity)
+    specificity = tn/(tn+fp)
+    print("Specificity: ", specificity)
+    precision = tp/(tp+fp)
+    print("Precision: ", precision)
+    accuracy = (tp+tn)/(tp+tn+fp+fn)
+    print("Accuracy: ", accuracy)
+    f1_score = 2*sensitivity*precision/(sensitivity+precision)
+    print("F1-score: ", f1_score)
 
 
 ## this function evaluate model with not whole image's differencies [0,1], only IOU area
@@ -64,7 +70,7 @@ def model_evaluate_with_predicted_images(folder_path:str)->dict:
     if not check_folder_predicted_images(folder_path):
         raise Exception("from model_evaluate_with_predicted_images(): coudn't make predicted image or wrong number or images")
     
-    pred_npimgs, mask_npimgs = load_pred_gray_and_mask_gray_imgs(folder_path)
+    indices, pred_npimgs, mask_npimgs = load_pred_gray_and_mask_gray_imgs(folder_path)
     print(mask_npimgs.shape)
     mask_pixels = np.sum(mask_npimgs, axis=(1,2))
     pred_pixels = np.sum(pred_npimgs, axis=(1,2))
@@ -121,23 +127,101 @@ def make_predicted_images_to_folder(folder_path:str):
             cv2.imwrite(pred_file_list[idx], image)
 
 
-def load_pred_gray_and_mask_gray_imgs(folder_path:str)->'list[np.ndarray, np.ndarray]':
+def load_pred_gray_and_mask_gray_imgs(folder_path:str)->'list[np.ndarray, np.ndarray, np.ndarray]':
     mask_file_list = glob.glob(f'{folder_path}/*_mask.png')
     re_mask = re.compile('([0-9]+)_mask.png')
     mask_imgs = []
     pred_imgs = []
+    indices = []
 
     for mask_file in mask_file_list:
         head, tail = os.path.split(mask_file)
         num_str = re_mask.match(tail).group(1)
+        indices.append(int(num_str))
         pred_file = os.path.join(head, num_str + "_predicted.png")
 
         mask_imgs.append(cv2.imread(mask_file,cv2.IMREAD_GRAYSCALE))
         pred_imgs.append(cv2.imread(pred_file,cv2.IMREAD_GRAYSCALE))
 
-    return [np.array(pred_imgs), np.array(mask_imgs)]
+    return [np.array(indices), np.array(pred_imgs), np.array(mask_imgs)]
 
 
+def get_mask_and_pred_centers_with_index(folder_path:str, roundness:int=None)->'list[list[int], list[Union[float,None]], list[Union[float,None]], list[Union[float,None]], list[Union[float,None]]]':
+    eval_tool = Eval_tool()
+    fe = FeatureExtractor()
+    indices, pred_imgs, mask_imgs = load_pred_gray_and_mask_gray_imgs(folder_path)
+
+    pred_x_list = []
+    pred_y_list = []
+    mask_x_list = []
+    mask_y_list = []
+    for idx in range(len(pred_imgs)):
+        pred_info = eval_tool.get_calib_ellipse_info2(pred_imgs[idx])
+        mask_info = eval_tool.get_calib_ellipse_info2(mask_imgs[idx])
+
+        pred_x, pred_y = None, None
+        if pred_info:
+            center, w, h, radian = pred_info
+            pred_x, pred_y = center
+            if w > h:
+                r = h/w
+            else:
+                r = w/h
+            
+            if roundness:
+                if r < roundness:
+                    pred_x, pred_y = None, None
+            
+
+        mask_x, mask_y = None, None
+        if mask_info:
+            center, w, h, radian = mask_info
+            mask_x, mask_y = center
+            if w > h:
+                r = h/w
+            else:
+                r = w/h
+            
+            if roundness:
+                if r < roundness:
+                    mask_x, mask_y = None, None  
+
+        mask_x_list.append(mask_x)
+        mask_y_list.append(mask_y)
+        pred_x_list.append(pred_x)
+        pred_y_list.append(pred_y)
+
+    return [list(indices), mask_x_list, mask_y_list, pred_x_list, pred_y_list]
+
+
+def save_indexed_centers_csv(folder_path:str, roundness:int=None)->None:
+    indices, mask_x_list, mask_y_list, pred_x_list, pred_y_list = get_mask_and_pred_centers_with_index(folder_path,roundness)
+    fe = FeatureExtractor()
+    indices = np.array(indices)
+    
+    ## ex) grouped_indices = [[100,850], [1000,1750]]
+    grouped_indices = fe.get_grouped_sequence(indices)
+    
+    npa_mask_x = []
+    npa_mask_y = []
+    npa_pred_x = []
+    npa_pred_y = []
+
+    for grouped in grouped_indices:
+        start_num, end_num = grouped
+        start_index = np.where(indices==start_num)[0]
+        end_index = np.where(indices==end_num)[0]
+        npa_mask_x = np.append(npa_mask_x, np.array(fe.fill_na(mask_x_list[start_index:end_index+1],'all')))
+        npa_mask_y = np.append(npa_mask_y, np.array(fe.fill_na(mask_y_list[start_index:end_index+1],'all')))
+        npa_pred_x = np.append(npa_pred_x, np.array(fe.fill_na(pred_x_list[start_index:end_index+1],'all')))
+        npa_pred_y = np.append(npa_pred_y, np.array(fe.fill_na(pred_y_list[start_index:end_index+1],'all')))
+
+    with open(f'{os.path.join(folder_path,"indexed_centers").csv}','w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(["index", "mask_x", "mask_y", "pred_x", "pred_y"])
+        for i in range(len(indices)):
+            writer.writerow([indices[i], npa_mask_x[i], npa_mask_y[i], npa_pred_x[i], npa_pred_y[i]])
+            
 def get_IOUs(pred_imgs:np.ndarray, mask_imgs:np.ndarray)->np.ndarray:
     
     IOUs = []
@@ -207,6 +291,10 @@ def get_average_precision_score(y_true:np.ndarray, y_pred:np.ndarray, flag_draw:
         plt.show()
     return average_precision
 
+
+
+
+## copy images from from_folder to to_folder. the index is accumulated
 def copy_images(from_folder:str, to_folder:str, flag_predicted_image:bool=True)-> None:
     from_images = glob.glob(os.path.join(from_folder,"*_orig.png"))
     to_images = glob.glob(os.path.join(to_folder,"*_orig.png"))
@@ -227,10 +315,10 @@ if __name__ == '__main__':
     # f_path = "C:\kwoncy\eye\image_datas\\6_sixth_make_roi_with_bad_video_images\\test_with_clean_little_bad_imgs"
     f_path = "C:\kwoncy\eye\image_datas\\6_sixth_make_roi_with_bad_video_images\\test_with_bad_imgs"
     # model_evaluate_with_predicted_images(f_path)
-    # model_evaluate_with_predicted_images2(f_path)
+    model_evaluate_with_predicted_images2(f_path)
     # FROM_FOLDER = "C:\kwoncy\eye\image_datas\\6_sixth_make_roi_with_bad_video_images\\test_with_little_bad_imgs" 
     # TO_FOLDER = "C:\kwoncy\eye\image_datas\\6_sixth_make_roi_with_bad_video_images\\test_with_clean_little_bad_imgs" 
     # copy_images(FROM_FOLDER,TO_FOLDER)
     
     # print(2*0.990*0.977/(0.990+0.977))
-    print(2*0.835*0.957/(0.835+0.957))
+    # print(2*0.835*0.957/(0.835+0.957))
